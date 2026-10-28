@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "zorp.mail",
+  "name": "zorp Mail",
+  "version": "0.1.0",
+  "author": "tom",
+  "license": "MIT",
+  "description": "Unread mail from zorp's local cache in the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "zorp Mail",
+    "description": "An envelope with an unread count. Hover it for the newest mail in the watched folders; click to open zorp.",
+    "category": "Info",
+    "aliases": [
+      "zorp",
+      "mail",
+      "email",
+      "inbox",
+      "outlook"
+    ],
+    "allowMultiple": false,
+    "defaults": {
+      "refreshIntervalSec": 15,
+      "hoverToOpen": true,
+      "hoverDelayMs": 220
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 5,
+        "max": 600,
+        "step": 5,
+        "defaultValue": 15,
+        "description": "How often to re-read zorp's cache. This is a local SQLite read, not a network call; the zorp daemon does the syncing."
+      },
+      {
+        "key": "hoverToOpen",
+        "type": "boolean",
+        "label": "Open on hover",
+        "defaultValue": true,
+        "description": "When off, the list opens on right-click only."
+      },
+      {
+        "key": "hoverDelayMs",
+        "type": "integer",
+        "label": "Hover delay (ms)",
+        "min": 0,
+        "max": 1500,
+        "step": 20,
+        "defaultValue": 220,
+        "description": "How long the pointer must rest on the icon before the list appears."
+      }
+    ]
+  }
+}

@@ -1,0 +1,115 @@
+#!/bin/bash
+#
+# omarchy:summary=Refresh the zorp mail record for the bar
+# omarchy:group=zorp
+#
+# Reads zorp's local cache and writes a small record where the bar widget
+# watches. Nothing here talks to Microsoft: the zorp daemon keeps the cache in
+# sync, and this only looks at what it has already put on disk. The panel is
+# a pure display; everything it knows, this script wrote.
+
+set -euo pipefail
+
+CONFIG="${OMARCHY_ZORP_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/zorp-mail.env}"
+DB="${ZORP_DB:-${XDG_DATA_HOME:-$HOME/.local/share}/zorp/zorp.db}"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/zorp"
+STATE_FILE="$STATE_DIR/mail.json"
+
+# The config is optional: the defaults are what zorp itself notifies on.
+# shellcheck disable=SC1090
+[[ -f "$CONFIG" ]] && source "$CONFIG"
+FOLDERS="${FOLDERS:-inbox}"
+LIMIT="${LIMIT:-8}"
+[[ "$LIMIT" =~ ^[0-9]+$ ]] || LIMIT=8
+
+die() { echo "omarchy-zorp-update: $*" >&2; exit 1; }
+
+publish() {
+  mkdir -p "$STATE_DIR"
+  cat >"$STATE_FILE.tmp"
+  mv -f "$STATE_FILE.tmp" "$STATE_FILE"
+}
+
+# A failure still has to reach the bar. The panel reads .error and says so
+# rather than sitting there showing a stale count as though it were current.
+write_error() {
+  jq -n --arg msg "$1" --arg at "$(date -u +%FT%TZ)" \
+    '{schemaVersion:1, updatedAt:$at, error:$msg, unread:0, folders:[], messages:[]}' | publish
+  die "$1"
+}
+
+command -v sqlite3 >/dev/null || write_error "sqlite3 is not installed"
+[[ -f "$DB" ]] || write_error "no zorp cache yet — run zorp login, then zorp sync"
+
+# Daemon state is best-effort: the cache is still worth showing without it,
+# just marked as possibly stale. `status` never starts a daemon, so this is
+# safe to run every few seconds.
+daemon_state=stopped
+daemon_error=""
+if status=$(timeout 3 zorp daemon status 2>/dev/null); then
+  daemon_state=$(sed -n 's/^state: *//p' <<<"$status")
+  daemon_error=$(sed -n 's/^error: *//p' <<<"$status")
+fi
+
+# FOLDERS is a space-separated list of well-known names (inbox, archive, ...)
+# or display names, the same forms zorp's own notify.folders takes. It goes
+# into the query as a JSON array literal, so quotes are doubled for SQL.
+folders_json=$(jq -cn --arg f "$FOLDERS" '$f | split(" ") | map(select(. != "") | ascii_downcase)')
+folders_sql=${folders_json//\'/\'\'}
+
+query() {
+  # -readonly: never take a write lock against the daemon. The timeout covers
+  # the moment a WAL checkpoint holds the database.
+  sqlite3 -readonly -json -cmd '.timeout 3000' "$DB" "$1"
+}
+
+watched="
+  SELECT id, name, well_known, unread_count FROM folders
+  WHERE lower(well_known) IN (SELECT value FROM json_each('$folders_sql'))
+     OR lower(name)       IN (SELECT value FROM json_each('$folders_sql'))"
+
+# unread_count is the server's figure, so it counts mail older than the cache
+# window too; the message list below can only show what is cached.
+folders=$(query "SELECT name, unread_count AS unread FROM ($watched) ORDER BY name") \
+  || write_error "could not read the zorp cache"
+
+messages=$(query "
+  SELECT m.graph_id AS id, f.name AS folder, m.from_name AS fromName,
+         m.from_addr AS fromAddr, m.subject, m.body_preview AS preview,
+         m.received_at AS receivedAt, m.is_read = 0 AS unread,
+         m.flagged = 1 AS flagged, m.importance = 'high' AS important,
+         m.has_attachments = 1 AS attachments
+  FROM messages m JOIN ($watched) f ON f.id = m.folder_id
+  WHERE m.deleted = 0 AND m.from_search = 0
+  ORDER BY m.received_at DESC
+  LIMIT $LIMIT") || write_error "could not read the zorp cache"
+
+account=$(query "SELECT upn, display_name AS name FROM accounts LIMIT 1") || account='[]'
+
+# sqlite3 -json prints nothing at all for an empty result.
+jq -n \
+  --argjson folders "${folders:-[]}" \
+  --argjson messages "${messages:-[]}" \
+  --argjson account "${account:-[]}" \
+  --argjson wanted "$folders_json" \
+  --arg state "$daemon_state" \
+  --arg daemonError "$daemon_error" \
+  --arg at "$(date -u +%FT%TZ)" '
+  {
+    schemaVersion: 1,
+    updatedAt: $at,
+    account: ($account[0] // null),
+    daemon: { state: $state, error: (if $daemonError == "" then null else $daemonError end) },
+    error: (
+      if $state == "needs_login" then "signed out — run zorp login"
+      elif ($folders | length) == 0 then "no folder matches FOLDERS=\($wanted | join(" "))"
+      else null end),
+    unread: ([$folders[].unread] | add // 0),
+    folders: $folders,
+    messages: [ $messages[] | .unread = (.unread == 1)
+                            | .flagged = (.flagged == 1)
+                            | .important = (.important == 1)
+                            | .attachments = (.attachments == 1) ]
+  }' | publish
+
+echo "wrote $STATE_FILE ($(jq -r '.unread' "$STATE_FILE") unread, daemon $daemon_state)"
