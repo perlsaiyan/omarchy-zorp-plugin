@@ -68,9 +68,17 @@ watched="
   WHERE lower(well_known) IN (SELECT value FROM json_each('$folders_sql'))
      OR lower(name)       IN (SELECT value FROM json_each('$folders_sql'))"
 
-# unread_count is the server's figure, so it counts mail older than the cache
-# window too; the message list below can only show what is cached.
-folders=$(query "SELECT name, unread_count AS unread FROM ($watched) ORDER BY name") \
+# Count the unread messages zorp has cached, not the folder's unread_count.
+# That server figure can include items Graph never returns as messages (an
+# Inbox reporting 2 unread while listing one read message), so the bar would
+# show mail zorp can't. The cost: unread mail older than the cache window
+# isn't counted.
+folders=$(query "
+  SELECT f.name,
+         (SELECT count(*) FROM messages m
+          WHERE m.folder_id = f.id AND m.is_read = 0
+            AND m.deleted = 0 AND m.from_search = 0) AS unread
+  FROM ($watched) f ORDER BY f.name") \
   || write_error "could not read the zorp cache"
 
 messages=$(query "

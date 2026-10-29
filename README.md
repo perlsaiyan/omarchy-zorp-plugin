@@ -40,7 +40,7 @@ Optional, in `~/.config/omarchy/zorp-mail.env` (see `example.env`):
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `FOLDERS` | `inbox` | Space-separated folders to count and list |
+| `FOLDERS` | `inbox` | Space-separated folders to count and list (unread mail in zorp's cache; mail older than its sync window isn't counted) |
 | `LIMIT` | `8` | Messages shown in the card |
 
 The refresh interval and hover behaviour are manifest settings, adjustable in
