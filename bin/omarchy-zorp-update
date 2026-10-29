@@ -94,11 +94,21 @@ messages=$(query "
 
 account=$(query "SELECT upn, display_name AS name FROM accounts LIMIT 1") || account='[]'
 
+# Today's meetings, through zorp itself rather than its calendar tables: it
+# reads the same cache, leaves out declined and cancelled meetings, and keeps
+# this script off another schema. The card drops the ones already over, so
+# they disappear as they end without waiting for the next run. null (not [])
+# when zorp can't say, e.g. calendar.enabled = false: the card hides the
+# section instead of claiming a free day.
+meetings=$(timeout 3 zorp agenda --json --days 1 2>/dev/null) || meetings=null
+jq -e 'type == "array"' <<<"$meetings" >/dev/null 2>&1 || meetings=null
+
 # sqlite3 -json prints nothing at all for an empty result.
 jq -n \
   --argjson folders "${folders:-[]}" \
   --argjson messages "${messages:-[]}" \
   --argjson account "${account:-[]}" \
+  --argjson meetings "$meetings" \
   --argjson wanted "$folders_json" \
   --arg state "$daemon_state" \
   --arg daemonError "$daemon_error" \
@@ -117,7 +127,11 @@ jq -n \
     messages: [ $messages[] | .unread = (.unread == 1)
                             | .flagged = (.flagged == 1)
                             | .important = (.important == 1)
-                            | .attachments = (.attachments == 1) ]
+                            | .attachments = (.attachments == 1) ],
+    meetings: (if $meetings == null then null else
+      [ $meetings[] | { subject, start, end, allDay: (.all_day == true),
+                        location: (.location // ""), joinUrl: (.join_url // ""),
+                        response: (.response // "") } ] end)
   }' | publish
 
 echo "wrote $STATE_FILE ($(jq -r '.unread' "$STATE_FILE") unread, daemon $daemon_state)"

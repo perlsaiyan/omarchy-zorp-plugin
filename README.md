@@ -2,7 +2,8 @@
 
 An envelope in the Omarchy bar with the unread count from
 [zorp](https://github.com/perlsaiyan/zorp)'s local cache beside it. Hover it for
-the newest mail in the watched folders; click to open zorp.
+the rest of today's meetings and the newest mail in the watched folders; click
+to open zorp.
 
 Built for Omarchy 4.x (Quattro shell plugins).
 
@@ -24,8 +25,9 @@ editing the QML, run `omarchy restart shell`.
 
 | Action | Does |
 |---|---|
-| Hover | Shows the card: unread count, account, newest messages |
-| Left click (icon, count or any row) | `zorp-focus`: raise zorp, or open it |
+| Hover | Shows the card: unread count, account, the rest of today's meetings, newest messages |
+| Left click (icon, count or a mail row) | `zorp-focus`: raise zorp, or open it |
+| Click a meeting | Joins it (its Teams or Zoom link), or opens zorp if it has none |
 | Right click | Pin the card open / unpin it |
 | Middle click | Re-read the cache now |
 
@@ -33,6 +35,12 @@ Unread rows have an accent bar and a bold sender. The markers after the time
 are zorp's own: `!` high importance, `*` flagged, `+` attachments. The envelope
 turns the urgent colour when the feed is broken (signed out, no cache, no
 matching folder), and the card says why.
+
+**Today** lists the meetings still to come, each dropping off as it ends. The
+one on now has the accent bar and says `now`; later ones count down
+(`in 12m`). Tentative and unanswered meetings say so. This needs zorp 0.11 or
+later with `calendar.enabled` on (the default); otherwise the section isn't
+shown. Declined and cancelled meetings are left out, as in `zorp agenda`.
 
 ## Configuration
 
@@ -56,8 +64,9 @@ Panel.qml                 polls the updater, watches the record, draws the card
 
 The updater opens `~/.local/share/zorp/zorp.db` with `sqlite3 -readonly`, so it
 never takes a lock against the daemon and never talks to Microsoft. It asks
-`zorp daemon status` for the sync state, which never starts a daemon. The
-record lands in `~/.local/state/omarchy/zorp/mail.json`; run the updater by
+`zorp daemon status` for the sync state, which never starts a daemon, and
+`zorp agenda --json --days 1` for today's meetings, which reads the same cache.
+The record lands in `~/.local/state/omarchy/zorp/mail.json`; run the updater by
 hand and the bar repaints.
 
 New-mail desktop notifications come from the zorp daemon itself, not from

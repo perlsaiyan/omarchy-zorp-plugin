@@ -38,8 +38,22 @@ Panel {
   readonly property string daemonState: record && record.daemon ? String(record.daemon.state || "") : ""
   property double nowMs: Date.now()
 
-  function open() { root.controller.show(); root.refresh() }
-  function openFromHotkey() { root.controller.show(); root.refresh() }
+  // null when zorp couldn't give an agenda (calendar off): no section at all.
+  readonly property bool hasAgenda: record && Array.isArray(record.meetings)
+  // The rest of today: the updater lists the whole day, and anything already
+  // over drops out here as the clock passes it rather than on the next run.
+  readonly property var meetings: {
+    if (!root.hasAgenda) return []
+    var out = []
+    for (var i = 0; i < root.record.meetings.length; i++) {
+      var m = root.record.meetings[i]
+      if (Date.parse(m.end) > root.nowMs) out.push(m)
+    }
+    return out
+  }
+
+  function open() { root.nowMs = Date.now(); root.controller.show(); root.refresh() }
+  function openFromHotkey() { root.nowMs = Date.now(); root.controller.show(); root.refresh() }
   function close() { root.controller.hide() }
   function toggle() { root.opened ? root.close() : root.open() }
 
@@ -51,6 +65,43 @@ Panel {
   function openZorp() {
     Util.execArgv(["zorp-focus"])
     if (root.hostWidget) root.hostWidget.close()
+  }
+
+  // A meeting row joins the meeting when it has a link, as zorp's own
+  // reminders do; otherwise it opens zorp, where g c shows the calendar.
+  function openMeeting(m) {
+    if (m.joinUrl) {
+      Util.execArgv(["xdg-open", m.joinUrl])
+      if (root.hostWidget) root.hostWidget.close()
+    } else {
+      root.openZorp()
+    }
+  }
+
+  function meetingLive(m) { return !m.allDay && Date.parse(m.start) <= root.nowMs }
+
+  // Right-hand cue: how long until it starts, or that it is on now.
+  function meetingCue(m) {
+    if (m.allDay) return "all day"
+    var start = Date.parse(m.start)
+    if (start <= root.nowMs) return "now"
+    var mins = Math.ceil((start - root.nowMs) / 60000)
+    if (mins < 60) return "in " + mins + "m"
+    return "in " + Math.floor(mins / 60) + "h" + (mins % 60 ? " " + (mins % 60) + "m" : "")
+  }
+
+  function meetingTimes(m) {
+    if (m.allDay) return "All day"
+    return Qt.formatTime(new Date(Date.parse(m.start)), "HH:mm") + "–" +
+           Qt.formatTime(new Date(Date.parse(m.end)), "HH:mm")
+  }
+
+  function meetingDetail(m) {
+    var bits = [root.meetingTimes(m)]
+    if (m.location) bits.push(m.location)
+    if (m.response === "tentativelyAccepted") bits.push("tentative")
+    else if (m.response === "notResponded") bits.push("not answered")
+    return bits.join(" · ")
   }
 
   function folderSummary() {
@@ -213,6 +264,104 @@ Panel {
         font.pixelSize: Style.space(12)
       }
 
+      // =============================================================== today
+      Text {
+        visible: root.hasAgenda
+        text: "Today"
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.space(11)
+        font.weight: Font.DemiBold
+      }
+
+      Text {
+        visible: root.hasAgenda && root.meetings.length === 0
+        width: parent.width
+        text: "No more meetings today."
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.space(12)
+      }
+
+      Repeater {
+        model: root.meetings
+
+        delegate: Rectangle {
+          id: meetingRow
+          required property var modelData
+          readonly property bool live: root.meetingLive(modelData)
+
+          width: body.width
+          implicitHeight: meetingLines.implicitHeight + Style.space(12)
+          radius: Style.space(6)
+          color: meetingHover.hovered ? Style.selectedFillFor(root.foreground, Color.accent) : "transparent"
+
+          HoverHandler { id: meetingHover }
+          TapHandler { onTapped: root.openMeeting(meetingRow.modelData) }
+
+          // The meeting on now gets the same accent bar as unread mail.
+          Rectangle {
+            visible: meetingRow.live
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(3)
+            height: parent.height - Style.space(12)
+            radius: width / 2
+            color: Color.accent
+          }
+
+          Column {
+            id: meetingLines
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: Style.space(12)
+            anchors.rightMargin: Style.space(8)
+            spacing: Style.space(1)
+
+            Item {
+              width: parent.width
+              implicitHeight: Style.space(17)
+
+              Text {
+                anchors.left: parent.left
+                anchors.right: cueLabel.left
+                anchors.rightMargin: Style.space(10)
+                anchors.verticalCenter: parent.verticalCenter
+                text: meetingRow.modelData.subject || "(no subject)"
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.space(13)
+                font.weight: meetingRow.live ? Font.DemiBold : Font.Normal
+                elide: Text.ElideRight
+              }
+
+              Text {
+                id: cueLabel
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.meetingCue(meetingRow.modelData)
+                color: meetingRow.live ? Color.accent : root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Style.space(11)
+              }
+            }
+
+            Text {
+              width: parent.width
+              text: root.meetingDetail(meetingRow.modelData)
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.space(11)
+              elide: Text.ElideRight
+            }
+          }
+        }
+      }
+
+      PanelSeparator { width: parent.width; visible: root.hasAgenda }
+
+      // ================================================================ mail
       Text {
         visible: root.errorText === "" && root.messages.length === 0
         width: parent.width
